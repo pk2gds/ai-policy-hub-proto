@@ -16,9 +16,6 @@ Serve the pages by running `python3 -m http.server` then navigate to `http://[::
 You can also use the helper script by running `sh ./dev.sh` or make the script executable by running `chmod +x run.sh` the first time. Then you can simply run `./dev.sh`
 
 
-
-//VPS setup:
-
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -27,6 +24,29 @@ set -euo pipefail
 # ===============================
 
 apt update && apt upgrade -y
+
+# ===============================
+# Remove Apache2 if installed
+# ===============================
+
+if dpkg -l | grep -q apache2; then
+    echo ">>> Apache2 detected. Removing to avoid port conflicts..."
+    
+    systemctl stop apache2 || true
+    systemctl disable apache2 || true
+
+    apt purge -y apache2 apache2-utils apache2-bin apache2.2-common || true
+    apt autoremove -y
+
+    echo ">>> Apache2 removed."
+else
+    echo ">>> Apache2 not installed. Continuing..."
+fi
+
+# ===============================
+# Install Nginx and dependencies
+# ===============================
+
 apt install -y nginx ufw curl git software-properties-common
 
 # ===============================
@@ -41,12 +61,11 @@ ufw --force enable
 
 # ===============================
 # Install SSLH (Port Multiplexer)
-# Allows SSH & HTTPS on port 443
 # ===============================
 
 apt install -y sslh
 
-# Configure SSLH to listen on 443 and detect protocols
+# Configure SSLH
 cat >/etc/default/sslh <<EOF
 RUN=yes
 DAEMON=/usr/sbin/sslh
@@ -61,10 +80,9 @@ EOF
 # Nginx Reconfiguration
 # ===============================
 
-# Move Nginx HTTPS listener from 443 → 8443
+# Move HTTPS from 443 → 8443
 sed -i 's/listen 443 ssl;/listen 8443 ssl;/g' /etc/nginx/sites-available/default || true
 
-# Ensure a simple static root exists
 mkdir -p /var/www/html
 cat >/var/www/html/index.html <<EOF
 <html><body><h1>VPS is Running Securely</h1></body></html>
@@ -75,14 +93,12 @@ EOF
 # ===============================
 
 apt install -y certbot python3-certbot-nginx
-# Note: initial certificate must go via port 80 challenge
 
 echo ">>> Please enter your domain name (DNS must already point here):"
 read DOMAIN
 
 certbot certonly --nginx -d "$DOMAIN" --non-interactive --agree-tos -m admin@"$DOMAIN"
 
-# After cert creation, ensure Nginx uses it under port 8443
 sed -i "s|ssl_certificate .*|ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;|" /etc/nginx/sites-available/default
 sed -i "s|ssl_certificate_key .*|ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;|" /etc/nginx/sites-available/default
 
@@ -103,6 +119,7 @@ sed -i '/server_name _;/a \    include snippets/security-headers.conf;' /etc/ngi
 # ===============================
 # Restart services
 # ===============================
+
 systemctl restart nginx
 systemctl restart sslh
 
